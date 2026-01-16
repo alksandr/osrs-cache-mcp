@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "osrs-cache": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "cwd": "S:/RSPS/AI Tools/MCP/osrs-cache",
+      "env": {
+        "QUIET": "1"
+      }
+    },
+    "osrs-cache-docker-run": {
+      "command": "docker",
+      "args": ["compose", "run", "--rm", "-i", "-e", "QUIET=1", "osrs-cache-mcp"],
+      "cwd": "S:/RSPS/AI Tools/MCP/osrs-cache"
+    },
+    "osrs-cache-docker-exec": {
+      "command": "docker",
+      "args": ["exec", "-i", "-e", "QUIET=1", "mcp-osrs-cache-daemon", "node", "dist/index.js"]
+    }
+  }
+}

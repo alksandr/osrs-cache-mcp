@@ -1,0 +1,32 @@
+# Dependencies
+node_modules
+
+# Build output (we rebuild in Docker)
+dist
+
+# Cache data (mounted as volume)
+osrs-*-unpacked
+*.cache
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Config (use environment variables in Docker)
+osrs-cache.config.json
+.env
+mcp-config-*.json

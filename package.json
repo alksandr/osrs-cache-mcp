@@ -1,0 +1,25 @@
+{
+  "name": "osrs-cache-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for OSRS game cache data access - helps reverse engineer RuneScape cache",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "osrs-cache-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc -w"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

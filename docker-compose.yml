@@ -1,0 +1,27 @@
+services:
+  # For: docker compose run --rm -i osrs-cache-mcp
+  osrs-cache-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: osrs-cache-mcp:latest
+    volumes:
+      - ${CACHE_PATH:?Set CACHE_PATH in .env}:/data/cache:ro
+    environment:
+      - OSRS_CACHE_PATH=/data/cache
+    stdin_open: true
+
+  # For: docker exec -i mcp-osrs-cache-daemon node dist/index.js
+  # Build first: docker compose build
+  # Start with: docker compose up -d osrs-cache-daemon
+  osrs-cache-daemon:
+    image: osrs-cache-mcp:latest
+    container_name: mcp-osrs-cache-daemon
+    volumes:
+      - ${CACHE_PATH:?Set CACHE_PATH in .env}:/data/cache:ro
+    environment:
+      - OSRS_CACHE_PATH=/data/cache
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    entrypoint: ["tail", "-f", "/dev/null"]
