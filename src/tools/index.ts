@@ -80,7 +80,8 @@ import {
   handleFindRelatedAnimations,
   handleSearchSequencesAdvanced,
   handleGetNpcAnimations,
-  handleFindRelativeAnimationsEnhanced
+  handleFindRelativeAnimationsEnhanced,
+  handleGetSpotAnim
 } from './animation.js';
 
 export function getTools(): Tool[] {
@@ -860,6 +861,17 @@ export function getTools(): Tool[] {
       }
     },
     {
+      name: 'get_spotanim',
+      description: 'Get a spot animation (GFX effect) definition by ID. Returns model, animation, resize, recolor, and lighting data.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'number', description: 'Spot animation ID' }
+        },
+        required: ['id']
+      }
+    },
+    {
       name: 'search_sequences_advanced',
       description: 'Advanced animation/sequence search with multiple filters. Filter by type (skeletal/frame), duration, frame count, priority, sounds, hand items, frame group, Maya ID, or by NPC/object name. Supports pagination.',
       inputSchema: {
@@ -1112,6 +1124,8 @@ export async function handleToolCall(
       return handleFindRelatedAnimations(cache, args as { animation_id: number });
     case 'find_relative_animations':
       return handleFindRelativeAnimationsEnhanced(cache, args as { animation_id?: number; npc_id?: number; range?: number });
+    case 'get_spotanim':
+      return handleGetSpotAnim(cache, args as { id: number });
     case 'search_sequences_advanced':
       return handleSearchSequencesAdvanced(cache, args as {
         type?: 'skeletal' | 'frame';

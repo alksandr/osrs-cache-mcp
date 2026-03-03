@@ -372,3 +372,56 @@ export async function handleFindRelativeAnimationsEnhanced(
     content: [{ type: 'text', text: lines.join('\n') }]
   };
 }
+
+/**
+ * Handle get_spotanim tool — fetch a spot animation definition by ID
+ */
+export async function handleGetSpotAnim(
+  cache: CacheManager,
+  args: { id: number }
+): Promise<ToolResponse> {
+  const spotAnim = await cache.getSpotAnim(args.id);
+
+  if (!spotAnim) {
+    return {
+      content: [{ type: 'text', text: `Spot animation ${args.id} not found.` }],
+      isError: true
+    };
+  }
+
+  const lines: string[] = [
+    `Spot Animation ${args.id}`,
+    '─'.repeat(40)
+  ];
+
+  const fieldLabels: Record<string, string> = {
+    animationId: 'Animation ID',
+    modelId:     'Model ID',
+    resizeX:     'Resize X',
+    resizeY:     'Resize Y',
+    rotaton:     'Rotation',
+    ambient:     'Ambient',
+    contrast:    'Contrast'
+  };
+
+  for (const [key, label] of Object.entries(fieldLabels)) {
+    if (spotAnim[key] != null) {
+      lines.push(`${label}: ${spotAnim[key]}`);
+    }
+  }
+
+  // Recolor pairs
+  const toFind = spotAnim.recolorToFind as number[] | undefined;
+  const toReplace = spotAnim.recolorToReplace as number[] | undefined;
+  if (toFind?.length) {
+    lines.push('');
+    lines.push('Recolors:');
+    for (let i = 0; i < toFind.length; i++) {
+      lines.push(`  ${toFind[i]} → ${toReplace?.[i] ?? '?'}`);
+    }
+  }
+
+  return {
+    content: [{ type: 'text', text: lines.join('\n') }]
+  };
+}

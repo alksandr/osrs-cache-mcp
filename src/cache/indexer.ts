@@ -3016,6 +3016,19 @@ export class CacheIndexer {
   }
 
   /**
+   * Read a spotanim definition by ID from disk
+   */
+  async getSpotAnim(id: number): Promise<Record<string, unknown> | null> {
+    const filePath = path.join(this.cachePath, 'spotanims', `${id}.json`);
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      return JSON.parse(content);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Advanced sequence search with multiple filters
    */
   searchSequencesAdvanced(

@@ -361,6 +361,10 @@ export class CacheManager {
   getSpotAnimsForAnimation(animId: number): number[] {
     return this.indexer.getSpotAnimsForAnimation(animId);
   }
+
+  async getSpotAnim(id: number): Promise<Record<string, unknown> | null> {
+    return this.indexer.getSpotAnim(id);
+  }
 }
 
 export { CacheReader } from './reader.js';
