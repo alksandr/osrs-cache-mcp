@@ -54,11 +54,19 @@ import {
   // Phase 9: Export types
   ItemStatsExport,
   NpcCombatExport,
-  ModelRefExport
+  ModelRefExport,
+  // Phase 10: Animation types
+  SequenceIndexEntry,
+  SequenceType,
+  SequenceAdvancedFilter,
+  SequenceAdvancedResult,
+  RelatedAnimationsResult,
+  AnimationRoleEntry,
+  AnimationRole
 } from '../types.js';
 
 const BATCH_SIZE = 500;
-const INDEX_VERSION = 10; // Bump this to invalidate cached indexes (Phase 7.5: item sources)
+const INDEX_VERSION = 11; // Bump this to invalidate cached indexes (Phase 10: animation analysis)
 
 // Item variant index entry (for quick lookup)
 interface ItemVariantIndexEntry {
@@ -104,6 +112,8 @@ interface PersistedIndex {
   dbtableMetadata: [number, { rowCount: number; indexedCols: number[] }][];
   // Phase 7.5: Item sources index
   itemSourceIndex: [number, { npcDropRows: number[]; shopRows: number[] }][];
+  // Phase 10: Sequence index
+  sequences: SequenceIndexEntry[];
 }
 
 export class CacheIndexer {
@@ -133,6 +143,8 @@ export class CacheIndexer {
   private dbtableMetadata: Map<number, { rowCount: number; indexedCols: number[] }> | null = null;
   // Phase 7.5: Item sources index
   private itemSourceIndex: Map<number, { npcDropRows: number[]; shopRows: number[] }> | null = null;
+  // Phase 10: Sequence index
+  private sequenceIndex: SequenceIndexEntry[] | null = null;
 
   constructor(private cachePath: string) {}
 
@@ -144,7 +156,8 @@ export class CacheIndexer {
            this.interfaceScriptRefs !== null && this.interfaceVarbitRefs !== null && this.varbitInterfaceRefs !== null &&
            this.itemVariantIndex !== null &&
            this.dbrowIndex !== null && this.dbtableMetadata !== null &&
-           this.itemSourceIndex !== null;
+           this.itemSourceIndex !== null &&
+           this.sequenceIndex !== null;
   }
 
   private get indexFilePath(): string {
@@ -211,7 +224,10 @@ export class CacheIndexer {
       // Restore Phase 7.5 item sources index
       this.itemSourceIndex = new Map(data.itemSourceIndex || []);
 
-      log(`[osrs-cache] Loaded indexes from cache (${data.items.length} items, ${data.npcs.length} npcs, ${data.objects.length} objects, ${this.scriptIndex.length} scripts, ${this.varbitIndex.length} varbits, ${this.gamevalIndex.length} gamevals, ${this.interfaceIndex.length} interfaces, ${this.interfaceScriptRefs.size} interface script refs, ${this.itemVariantIndex.length} item variants, ${this.dbrowIndex.length} dbrows, ${this.itemSourceIndex.size} item sources)`);
+      // Restore Phase 10 sequence index
+      this.sequenceIndex = data.sequences || [];
+
+      log(`[osrs-cache] Loaded indexes from cache (${data.items.length} items, ${data.npcs.length} npcs, ${data.objects.length} objects, ${this.scriptIndex.length} scripts, ${this.varbitIndex.length} varbits, ${this.gamevalIndex.length} gamevals, ${this.interfaceIndex.length} interfaces, ${this.interfaceScriptRefs.size} interface script refs, ${this.itemVariantIndex.length} item variants, ${this.dbrowIndex.length} dbrows, ${this.itemSourceIndex.size} item sources, ${this.sequenceIndex.length} sequences)`);
       return true;
     } catch {
       return false;
@@ -240,7 +256,8 @@ export class CacheIndexer {
         !this.interfaceScriptRefs || !this.interfaceVarbitRefs || !this.varbitInterfaceRefs ||
         !this.itemVariantIndex ||
         !this.dbrowIndex || !this.dbtableMetadata ||
-        !this.itemSourceIndex) {
+        !this.itemSourceIndex ||
+        !this.sequenceIndex) {
       return;
     }
 
@@ -274,7 +291,9 @@ export class CacheIndexer {
       dbrowIndex: this.dbrowIndex,
       dbtableMetadata: [...this.dbtableMetadata.entries()],
       // Phase 7.5: Item sources index
-      itemSourceIndex: [...this.itemSourceIndex.entries()]
+      itemSourceIndex: [...this.itemSourceIndex.entries()],
+      // Phase 10: Sequence index
+      sequences: this.sequenceIndex
     };
 
     try {
@@ -389,6 +408,11 @@ export class CacheIndexer {
     log('[osrs-cache] Building item sources index...');
     this.itemSourceIndex = await this.buildItemSourceIndex();
     log(`[osrs-cache] Item sources index built: ${this.itemSourceIndex.size} items with sources`);
+
+    // Phase 10: Build sequence index
+    log('[osrs-cache] Building sequence index...');
+    this.sequenceIndex = await this.buildSequenceIndex();
+    log(`[osrs-cache] Sequence index built: ${this.sequenceIndex.length} sequences`);
 
     // Save to disk for next time
     await this.saveToDisk(log);
@@ -514,8 +538,14 @@ export class CacheIndexer {
                 }
               }
 
-              // Index animations
-              for (const animKey of ['standingAnimation', 'walkingAnimation', 'rotateLeftAnimation', 'rotateRightAnimation']) {
+              // Index animations (all 15 NPC animation fields)
+              for (const animKey of [
+                'standingAnimation', 'walkingAnimation', 'runAnimation',
+                'rotate180Animation', 'rotateLeftAnimation', 'rotateRightAnimation',
+                'idleRotateLeftAnimation', 'idleRotateRightAnimation',
+                'runRotate180Animation', 'runRotateLeftAnimation', 'runRotateRightAnimation',
+                'crawlAnimation', 'crawlRotate180Animation', 'crawlRotateLeftAnimation', 'crawlRotateRightAnimation'
+              ]) {
                 const animId = npc[animKey as keyof NpcDef] as number;
                 if (animId && animId > 0) {
                   this.addToCrossRef(index.animationToEntities, animId, entry);
@@ -2689,5 +2719,324 @@ export class CacheIndexer {
     results.sort((a, b) => a.modelId - b.modelId);
 
     return results;
+  }
+
+  // ============================================
+  // Phase 10: Animation & Sequence Analysis
+  // ============================================
+
+  /**
+   * Build sequence index for all animations
+   */
+  private async buildSequenceIndex(): Promise<SequenceIndexEntry[]> {
+    const dir = path.join(this.cachePath, 'sequences');
+    const entries: SequenceIndexEntry[] = [];
+
+    try {
+      const files = await fs.readdir(dir);
+      const jsonFiles = files.filter(f => f.endsWith('.json'));
+
+      for (let i = 0; i < jsonFiles.length; i += BATCH_SIZE) {
+        const batch = jsonFiles.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (file) => {
+          try {
+            const content = await fs.readFile(path.join(dir, file), 'utf-8');
+            const seq = JSON.parse(content);
+
+            const isSkeletal = seq.animMayaID != null && seq.animMayaID > 0;
+            const frameIDs: number[] = seq.frameIDs || [];
+            const frameLengths: number[] = seq.frameLengths || [];
+            const frameSounds = seq.frameSounds || {};
+
+            const entry: SequenceIndexEntry = {
+              id: seq.id,
+              type: isSkeletal ? 'skeletal' : 'frame',
+              frameCount: isSkeletal ? (seq.animMayaEnd - seq.animMayaStart) : frameIDs.length,
+              totalDuration: isSkeletal
+                ? (seq.animMayaEnd - seq.animMayaStart)
+                : frameLengths.reduce((sum: number, l: number) => sum + l, 0),
+              forcedPriority: seq.forcedPriority ?? 0,
+              priority: seq.priority ?? -1,
+              leftHandItem: seq.leftHandItem ?? -1,
+              rightHandItem: seq.rightHandItem ?? -1,
+              hasSounds: Object.keys(frameSounds).length > 0,
+              maxLoops: seq.maxLoops ?? 0,
+              replyMode: seq.replyMode ?? 0,
+              stretches: seq.stretches ?? false,
+              animMayaID: isSkeletal ? seq.animMayaID : -1,
+              animMayaStart: seq.animMayaStart ?? 0,
+              animMayaEnd: seq.animMayaEnd ?? 0,
+              frameGroup: (!isSkeletal && frameIDs.length > 0)
+                ? (frameIDs[0] >>> 16)
+                : -1
+            };
+
+            entries.push(entry);
+          } catch {
+            // Skip invalid files
+          }
+        }));
+      }
+    } catch {
+      // sequences dir not found
+    }
+
+    entries.sort((a, b) => a.id - b.id);
+    return entries;
+  }
+
+  /**
+   * Get sequence index entry by ID
+   */
+  getSequenceEntry(id: number): SequenceIndexEntry | null {
+    if (!this.sequenceIndex) return null;
+    // Binary search since sorted by id
+    let lo = 0, hi = this.sequenceIndex.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      const midId = this.sequenceIndex[mid].id;
+      if (midId === id) return this.sequenceIndex[mid];
+      if (midId < id) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    return null;
+  }
+
+  /**
+   * Get total sequence count
+   */
+  getSequenceCount(): number {
+    return this.sequenceIndex?.length ?? 0;
+  }
+
+  /**
+   * Advanced sequence search with multiple filters
+   */
+  searchSequencesAdvanced(
+    filter: SequenceAdvancedFilter,
+    options?: { offset?: number; limit?: number }
+  ): AdvancedSearchResult<SequenceAdvancedResult> {
+    if (!this.sequenceIndex) {
+      return { results: [], totalCount: 0, offset: 0, limit: 25 };
+    }
+
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 25;
+
+    // Precompute entity name matches if needed
+    let npcNameMatches: Set<number> | null = null;
+    let objectNameMatches: Set<number> | null = null;
+
+    if (filter.usedByNpc && this.crossRefIndex) {
+      npcNameMatches = new Set<number>();
+      const queryLower = filter.usedByNpc.toLowerCase();
+      // Find all animations used by NPCs matching the name
+      for (const [animId, entities] of this.crossRefIndex.animationToEntities.entries()) {
+        for (const entity of entities) {
+          if (entity.type === 'npc' && entity.name.toLowerCase().includes(queryLower)) {
+            npcNameMatches.add(animId);
+            break;
+          }
+        }
+      }
+    }
+
+    if (filter.usedByObject && this.crossRefIndex) {
+      objectNameMatches = new Set<number>();
+      const queryLower = filter.usedByObject.toLowerCase();
+      for (const [animId, entities] of this.crossRefIndex.animationToEntities.entries()) {
+        for (const entity of entities) {
+          if (entity.type === 'object' && entity.name.toLowerCase().includes(queryLower)) {
+            objectNameMatches.add(animId);
+            break;
+          }
+        }
+      }
+    }
+
+    // Filter sequences
+    const matching: SequenceAdvancedResult[] = [];
+
+    for (const seq of this.sequenceIndex) {
+      // Type filter
+      if (filter.type && seq.type !== filter.type) continue;
+
+      // Duration filters
+      if (filter.minDuration != null && seq.totalDuration < filter.minDuration) continue;
+      if (filter.maxDuration != null && seq.totalDuration > filter.maxDuration) continue;
+
+      // Frame count filters
+      if (filter.minFrameCount != null && seq.frameCount < filter.minFrameCount) continue;
+      if (filter.maxFrameCount != null && seq.frameCount > filter.maxFrameCount) continue;
+
+      // Sound filter
+      if (filter.hasSounds != null && seq.hasSounds !== filter.hasSounds) continue;
+
+      // Hand item filters
+      if (filter.leftHandItem != null && seq.leftHandItem !== filter.leftHandItem) continue;
+      if (filter.rightHandItem != null && seq.rightHandItem !== filter.rightHandItem) continue;
+
+      // Priority filters
+      if (filter.minPriority != null && seq.forcedPriority < filter.minPriority) continue;
+      if (filter.maxPriority != null && seq.forcedPriority > filter.maxPriority) continue;
+
+      // Frame group filter
+      if (filter.frameGroup != null && seq.frameGroup !== filter.frameGroup) continue;
+
+      // Maya ID filter
+      if (filter.animMayaID != null && seq.animMayaID !== filter.animMayaID) continue;
+
+      // Entity name filters
+      if (npcNameMatches && !npcNameMatches.has(seq.id)) continue;
+      if (objectNameMatches && !objectNameMatches.has(seq.id)) continue;
+
+      // Build result
+      const result: SequenceAdvancedResult = {
+        id: seq.id,
+        type: seq.type,
+        frameCount: seq.frameCount,
+        totalDuration: seq.totalDuration,
+        forcedPriority: seq.forcedPriority,
+        hasSounds: seq.hasSounds,
+        leftHandItem: seq.leftHandItem,
+        rightHandItem: seq.rightHandItem
+      };
+
+      if (seq.type === 'skeletal' && seq.animMayaID > 0) {
+        result.animMayaID = seq.animMayaID;
+      }
+      if (seq.type === 'frame' && seq.frameGroup >= 0) {
+        result.frameGroup = seq.frameGroup;
+      }
+
+      // Add entity associations if entity filters were used
+      if (this.crossRefIndex && (npcNameMatches || objectNameMatches)) {
+        const entities = this.crossRefIndex.animationToEntities.get(seq.id);
+        if (entities) {
+          result.usedBy = entities.slice(0, 10).map(e => ({
+            id: e.id,
+            name: e.name,
+            entityType: e.type
+          }));
+        }
+      }
+
+      matching.push(result);
+    }
+
+    return {
+      results: matching.slice(offset, offset + limit),
+      totalCount: matching.length,
+      offset,
+      limit
+    };
+  }
+
+  /**
+   * Find all animations related to a given animation:
+   * - Other animations used by the same NPCs/objects
+   * - Animations sharing the same frame group or Maya skeleton
+   */
+  findRelatedAnimations(animationId: number): RelatedAnimationsResult | null {
+    if (!this.crossRefIndex || !this.sequenceIndex) return null;
+
+    const sourceEntry = this.getSequenceEntry(animationId);
+    if (!sourceEntry) return null;
+
+    const result: RelatedAnimationsResult = {
+      sourceAnimation: {
+        id: sourceEntry.id,
+        type: sourceEntry.type,
+        frameCount: sourceEntry.frameCount,
+        totalDuration: sourceEntry.totalDuration
+      },
+      byEntity: [],
+      allRelatedIds: [],
+      bySkeleton: []
+    };
+
+    const relatedIds = new Set<number>();
+
+    // 1. Find all entities using this animation
+    // The handler will read the full NPC/object defs to resolve proper animation roles
+    const entities = this.crossRefIndex.animationToEntities.get(animationId) || [];
+
+    for (const entity of entities) {
+      result.byEntity.push({
+        entityId: entity.id,
+        entityName: entity.name,
+        entityType: entity.type as 'npc' | 'object',
+        animations: [] // Populated by the handler with proper role resolution
+      });
+    }
+
+    // 2. Find animations sharing same frame group or Maya skeleton
+    if (sourceEntry.type === 'frame' && sourceEntry.frameGroup >= 0) {
+      for (const seq of this.sequenceIndex) {
+        if (seq.id !== animationId && seq.frameGroup === sourceEntry.frameGroup) {
+          result.bySkeleton.push({
+            id: seq.id,
+            type: seq.type,
+            frameCount: seq.frameCount,
+            totalDuration: seq.totalDuration
+          });
+          relatedIds.add(seq.id);
+        }
+      }
+    } else if (sourceEntry.type === 'skeletal' && sourceEntry.animMayaID > 0) {
+      // For skeletal, we can't easily group - each has a unique Maya ID
+      // But we can check for nearby Maya IDs (same skeleton export batch)
+      // Maya IDs in the same batch often differ by small amounts
+      // Skipping this heuristic for now - entity-based matching is more reliable
+    }
+
+    result.allRelatedIds = [...relatedIds].sort((a, b) => a - b);
+
+    return result;
+  }
+
+  /**
+   * Get all animation entries for NPC definition fields
+   */
+  getNpcAnimationEntries(npcDef: Record<string, unknown>): AnimationRoleEntry[] {
+    const entries: AnimationRoleEntry[] = [];
+
+    const animFields: [AnimationRole, string][] = [
+      ['standing', 'standingAnimation'],
+      ['walking', 'walkingAnimation'],
+      ['running', 'runAnimation'],
+      ['rotate180', 'rotate180Animation'],
+      ['rotateLeft', 'rotateLeftAnimation'],
+      ['rotateRight', 'rotateRightAnimation'],
+      ['idleRotateLeft', 'idleRotateLeftAnimation'],
+      ['idleRotateRight', 'idleRotateRightAnimation'],
+      ['runRotate180', 'runRotate180Animation'],
+      ['runRotateLeft', 'runRotateLeftAnimation'],
+      ['runRotateRight', 'runRotateRightAnimation'],
+      ['crawl', 'crawlAnimation'],
+      ['crawlRotate180', 'crawlRotate180Animation'],
+      ['crawlRotateLeft', 'crawlRotateLeftAnimation'],
+      ['crawlRotateRight', 'crawlRotateRightAnimation'],
+    ];
+
+    for (const [role, field] of animFields) {
+      const animId = npcDef[field] as number | undefined;
+      if (animId != null && animId > 0) {
+        const seq = this.getSequenceEntry(animId);
+        entries.push({
+          role,
+          animationId: animId,
+          sequence: seq ? {
+            type: seq.type,
+            frameCount: seq.frameCount,
+            totalDuration: seq.totalDuration,
+            forcedPriority: seq.forcedPriority,
+            hasSounds: seq.hasSounds
+          } : undefined
+        });
+      }
+    }
+
+    return entries;
   }
 }

@@ -763,3 +763,133 @@ export interface ModelRefExport {
   npcs: { id: number; name: string }[];
   objects: { id: number; name: string }[];
 }
+
+// ============================================
+// Phase 10: Animation & Sequence Analysis Types
+// ============================================
+
+// Animation type classification
+export type SequenceType = 'skeletal' | 'frame';
+
+// Sequence index entry for advanced filtering and search
+export interface SequenceIndexEntry {
+  id: number;
+  type: SequenceType;          // 'skeletal' if animMayaID > 0, else 'frame'
+  frameCount: number;          // Length of frameIDs array (frame-based) or maya frame range
+  totalDuration: number;       // Sum of frameLengths (ticks) or mayaEnd - mayaStart
+  forcedPriority: number;
+  priority: number;
+  leftHandItem: number;        // -1 if none
+  rightHandItem: number;       // -1 if none
+  hasSounds: boolean;          // frameSounds is non-empty
+  maxLoops: number;
+  replyMode: number;
+  stretches: boolean;
+  // Skeletal-specific fields
+  animMayaID: number;          // -1 if frame-based
+  animMayaStart: number;
+  animMayaEnd: number;
+  // Frame-based specific fields
+  frameGroup: number;          // High 16 bits of first frameID (archive ID), -1 if skeletal
+}
+
+// Filter options for search_sequences_advanced
+export interface SequenceAdvancedFilter {
+  type?: SequenceType;                // Filter by animation type
+  minDuration?: number;               // Minimum total duration in ticks
+  maxDuration?: number;               // Maximum total duration in ticks
+  minFrameCount?: number;             // Minimum frame count
+  maxFrameCount?: number;             // Maximum frame count
+  hasSounds?: boolean;                // Has sound effects
+  leftHandItem?: number;              // Specific left hand item
+  rightHandItem?: number;             // Specific right hand item
+  minPriority?: number;               // Minimum forced priority
+  maxPriority?: number;               // Maximum forced priority
+  frameGroup?: number;                // Specific frame group (archive ID)
+  animMayaID?: number;                // Specific Maya animation ID
+  usedByNpc?: string;                 // NPC name partial match
+  usedByObject?: string;              // Object name partial match
+}
+
+// Result for search_sequences_advanced
+export interface SequenceAdvancedResult {
+  id: number;
+  type: SequenceType;
+  frameCount: number;
+  totalDuration: number;
+  forcedPriority: number;
+  hasSounds: boolean;
+  leftHandItem: number;
+  rightHandItem: number;
+  // Skeletal fields (only if skeletal)
+  animMayaID?: number;
+  // Frame fields (only if frame-based)
+  frameGroup?: number;
+  // Entity associations
+  usedBy?: { id: number; name: string; entityType: string }[];
+}
+
+// Animation role in an NPC/object definition
+export type AnimationRole =
+  | 'standing' | 'walking' | 'running'
+  | 'rotate180' | 'rotateLeft' | 'rotateRight'
+  | 'idleRotateLeft' | 'idleRotateRight'
+  | 'runRotate180' | 'runRotateLeft' | 'runRotateRight'
+  | 'crawl' | 'crawlRotate180' | 'crawlRotateLeft' | 'crawlRotateRight'
+  | 'object';
+
+// Animation entry with role info for NPC/object animation listing
+export interface AnimationRoleEntry {
+  role: AnimationRole;
+  animationId: number;
+  sequence?: {
+    type: SequenceType;
+    frameCount: number;
+    totalDuration: number;
+    forcedPriority: number;
+    hasSounds: boolean;
+  };
+}
+
+// Result for find_related_animations
+export interface RelatedAnimationsResult {
+  sourceAnimation: {
+    id: number;
+    type: SequenceType;
+    frameCount: number;
+    totalDuration: number;
+  };
+  // Animations used by the same entities (grouped by entity)
+  byEntity: Array<{
+    entityId: number;
+    entityName: string;
+    entityType: 'npc' | 'object';
+    animations: AnimationRoleEntry[];
+  }>;
+  // All unique related animation IDs (excluding the source)
+  allRelatedIds: number[];
+  // Animations sharing the same frame group or Maya skeleton
+  bySkeleton: Array<{
+    id: number;
+    type: SequenceType;
+    frameCount: number;
+    totalDuration: number;
+  }>;
+}
+
+// Result for get_npc_animations
+export interface NpcAnimationsResult {
+  npc: {
+    id: number;
+    name: string;
+    combatLevel: number;
+    size: number;
+  };
+  animations: AnimationRoleEntry[];
+  // Morph/transform variants (if NPC has children)
+  transformAnimations?: Array<{
+    childNpcId: number;
+    childNpcName: string;
+    animations: AnimationRoleEntry[];
+  }>;
+}

@@ -38,7 +38,13 @@ import {
   // Phase 9: Export types
   ItemStatsExport,
   NpcCombatExport,
-  ModelRefExport
+  ModelRefExport,
+  // Phase 10: Animation types
+  SequenceIndexEntry,
+  SequenceAdvancedFilter,
+  SequenceAdvancedResult,
+  RelatedAnimationsResult,
+  AnimationRoleEntry
 } from '../types.js';
 
 export class CacheManager {
@@ -317,6 +323,30 @@ export class CacheManager {
 
   getModelRefsExport(): ModelRefExport[] {
     return this.indexer.getModelRefsExport();
+  }
+
+  // Phase 10: Animation analysis methods (delegate to indexer)
+  getSequenceEntry(id: number): SequenceIndexEntry | null {
+    return this.indexer.getSequenceEntry(id);
+  }
+
+  getSequenceCount(): number {
+    return this.indexer.getSequenceCount();
+  }
+
+  searchSequencesAdvanced(
+    filter: SequenceAdvancedFilter,
+    options?: { offset?: number; limit?: number }
+  ): AdvancedSearchResult<SequenceAdvancedResult> {
+    return this.indexer.searchSequencesAdvanced(filter, options);
+  }
+
+  findRelatedAnimations(animationId: number): RelatedAnimationsResult | null {
+    return this.indexer.findRelatedAnimations(animationId);
+  }
+
+  getNpcAnimationEntries(npcDef: Record<string, unknown>): AnimationRoleEntry[] {
+    return this.indexer.getNpcAnimationEntries(npcDef);
   }
 }
 
