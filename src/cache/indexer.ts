@@ -62,11 +62,13 @@ import {
   SequenceAdvancedResult,
   RelatedAnimationsResult,
   AnimationRoleEntry,
-  AnimationRole
+  AnimationRole,
+  RelativeAnimationResult,
+  AnimationCluster
 } from '../types.js';
 
 const BATCH_SIZE = 500;
-const INDEX_VERSION = 11; // Bump this to invalidate cached indexes (Phase 10: animation analysis)
+const INDEX_VERSION = 12; // Bump this to invalidate cached indexes (spot anim index)
 
 // Item variant index entry (for quick lookup)
 interface ItemVariantIndexEntry {
@@ -114,6 +116,8 @@ interface PersistedIndex {
   itemSourceIndex: [number, { npcDropRows: number[]; shopRows: number[] }][];
   // Phase 10: Sequence index
   sequences: SequenceIndexEntry[];
+  // Spot anim reverse index: animationId → spotanim IDs
+  spotAnimIndex: [number, number[]][];
 }
 
 export class CacheIndexer {
@@ -145,6 +149,8 @@ export class CacheIndexer {
   private itemSourceIndex: Map<number, { npcDropRows: number[]; shopRows: number[] }> | null = null;
   // Phase 10: Sequence index
   private sequenceIndex: SequenceIndexEntry[] | null = null;
+  // Spot anim reverse index: animationId → spotanim IDs
+  private spotAnimIndex: Map<number, number[]> | null = null;
 
   constructor(private cachePath: string) {}
 
@@ -157,7 +163,8 @@ export class CacheIndexer {
            this.itemVariantIndex !== null &&
            this.dbrowIndex !== null && this.dbtableMetadata !== null &&
            this.itemSourceIndex !== null &&
-           this.sequenceIndex !== null;
+           this.sequenceIndex !== null &&
+           this.spotAnimIndex !== null;
   }
 
   private get indexFilePath(): string {
@@ -227,6 +234,9 @@ export class CacheIndexer {
       // Restore Phase 10 sequence index
       this.sequenceIndex = data.sequences || [];
 
+      // Restore spot anim index
+      this.spotAnimIndex = new Map(data.spotAnimIndex || []);
+
       log(`[osrs-cache] Loaded indexes from cache (${data.items.length} items, ${data.npcs.length} npcs, ${data.objects.length} objects, ${this.scriptIndex.length} scripts, ${this.varbitIndex.length} varbits, ${this.gamevalIndex.length} gamevals, ${this.interfaceIndex.length} interfaces, ${this.interfaceScriptRefs.size} interface script refs, ${this.itemVariantIndex.length} item variants, ${this.dbrowIndex.length} dbrows, ${this.itemSourceIndex.size} item sources, ${this.sequenceIndex.length} sequences)`);
       return true;
     } catch {
@@ -257,7 +267,8 @@ export class CacheIndexer {
         !this.itemVariantIndex ||
         !this.dbrowIndex || !this.dbtableMetadata ||
         !this.itemSourceIndex ||
-        !this.sequenceIndex) {
+        !this.sequenceIndex ||
+        !this.spotAnimIndex) {
       return;
     }
 
@@ -293,7 +304,9 @@ export class CacheIndexer {
       // Phase 7.5: Item sources index
       itemSourceIndex: [...this.itemSourceIndex.entries()],
       // Phase 10: Sequence index
-      sequences: this.sequenceIndex
+      sequences: this.sequenceIndex,
+      // Spot anim index
+      spotAnimIndex: [...this.spotAnimIndex!.entries()]
     };
 
     try {
@@ -413,6 +426,11 @@ export class CacheIndexer {
     log('[osrs-cache] Building sequence index...');
     this.sequenceIndex = await this.buildSequenceIndex();
     log(`[osrs-cache] Sequence index built: ${this.sequenceIndex.length} sequences`);
+
+    // Build spot anim reverse index
+    log('[osrs-cache] Building spot anim index...');
+    this.spotAnimIndex = await this.buildSpotAnimIndex();
+    log(`[osrs-cache] Spot anim index built: ${this.spotAnimIndex.size} animations with spot anims`);
 
     // Save to disk for next time
     await this.saveToDisk(log);
@@ -2783,6 +2801,194 @@ export class CacheIndexer {
 
     entries.sort((a, b) => a.id - b.id);
     return entries;
+  }
+
+  /**
+   * Build reverse index from animationId → spotanim IDs
+   */
+  private async buildSpotAnimIndex(): Promise<Map<number, number[]>> {
+    const index = new Map<number, number[]>();
+    const dir = path.join(this.cachePath, 'spotanims');
+
+    try {
+      const files = await fs.readdir(dir);
+      const jsonFiles = files.filter(f => f.endsWith('.json'));
+
+      for (let i = 0; i < jsonFiles.length; i += BATCH_SIZE) {
+        const batch = jsonFiles.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (file) => {
+          try {
+            const content = await fs.readFile(path.join(dir, file), 'utf-8');
+            const spotAnim = JSON.parse(content);
+            const animId = spotAnim.animationId ?? spotAnim.animation ?? -1;
+            if (animId >= 0) {
+              const existing = index.get(animId);
+              if (existing) {
+                existing.push(spotAnim.id);
+              } else {
+                index.set(animId, [spotAnim.id]);
+              }
+            }
+          } catch {
+            // Skip invalid files
+          }
+        }));
+      }
+    } catch {
+      // spotanims dir not found
+    }
+
+    return index;
+  }
+
+  /**
+   * Get spot anim IDs linked to an animation
+   */
+  getSpotAnimsForAnimation(animId: number): number[] {
+    return this.spotAnimIndex?.get(animId) || [];
+  }
+
+  /**
+   * Enhanced find_relative_animations: accepts animation_id and/or npc_id,
+   * scans neighboring IDs, groups by frameGroup, includes spot anims
+   */
+  async findRelativeAnimationsEnhanced(args: {
+    animation_id?: number;
+    npc_id?: number;
+    range?: number;
+  }): Promise<RelativeAnimationResult | null> {
+    if (!this.sequenceIndex || !this.crossRefIndex || !this.spotAnimIndex) return null;
+
+    const range = args.range ?? 50;
+    const seedAnimIds: number[] = [];
+    let npcInfo: RelativeAnimationResult['npc'] = undefined;
+
+    // Collect seed animations
+    if (args.npc_id != null) {
+      const npcPath = path.join(this.cachePath, 'npc_defs', `${args.npc_id}.json`);
+      try {
+        const content = await fs.readFile(npcPath, 'utf-8');
+        const npc = JSON.parse(content);
+        npcInfo = {
+          id: npc.id,
+          name: npc.name || 'Unknown',
+          combatLevel: npc.combatLevel || 0
+        };
+        // Extract all animation fields
+        const animFields = [
+          'standingAnimation', 'walkingAnimation', 'runAnimation',
+          'rotate180Animation', 'rotateLeftAnimation', 'rotateRightAnimation',
+          'idleRotateLeftAnimation', 'idleRotateRightAnimation',
+          'runRotate180Animation', 'runRotateLeftAnimation', 'runRotateRightAnimation',
+          'crawlAnimation', 'crawlRotate180Animation', 'crawlRotateLeftAnimation', 'crawlRotateRightAnimation'
+        ];
+        for (const field of animFields) {
+          const id = npc[field];
+          if (id != null && id > 0 && !seedAnimIds.includes(id)) {
+            seedAnimIds.push(id);
+          }
+        }
+      } catch {
+        // NPC not found
+      }
+    }
+
+    if (args.animation_id != null) {
+      if (!seedAnimIds.includes(args.animation_id)) {
+        seedAnimIds.push(args.animation_id);
+      }
+    }
+
+    if (seedAnimIds.length === 0) return null;
+
+    // Build a quick lookup for sequence entries by ID
+    const seqById = new Map<number, SequenceIndexEntry>();
+    for (const seq of this.sequenceIndex) {
+      seqById.set(seq.id, seq);
+    }
+
+    // Collect all frameGroups from seeds
+    const seedFrameGroups = new Set<number>();
+    for (const seedId of seedAnimIds) {
+      const entry = seqById.get(seedId);
+      if (entry && entry.frameGroup >= 0) {
+        seedFrameGroups.add(entry.frameGroup);
+      }
+    }
+
+    // Scan range around each seed to find animations sharing frameGroups
+    const minId = Math.max(0, Math.min(...seedAnimIds) - range);
+    const maxId = Math.max(...seedAnimIds) + range;
+
+    // Group animations by frameGroup
+    const clusterMap = new Map<number, Map<number, SequenceIndexEntry>>();
+
+    for (const seq of this.sequenceIndex) {
+      if (seq.id < minId || seq.id > maxId) continue;
+      if (seq.frameGroup < 0) continue;
+      if (!seedFrameGroups.has(seq.frameGroup)) continue;
+
+      let group = clusterMap.get(seq.frameGroup);
+      if (!group) {
+        group = new Map();
+        clusterMap.set(seq.frameGroup, group);
+      }
+      group.set(seq.id, seq);
+    }
+
+    // Also ensure all seeds with frameGroup are in their cluster
+    for (const seedId of seedAnimIds) {
+      const entry = seqById.get(seedId);
+      if (entry && entry.frameGroup >= 0) {
+        let group = clusterMap.get(entry.frameGroup);
+        if (!group) {
+          group = new Map();
+          clusterMap.set(entry.frameGroup, group);
+        }
+        group.set(entry.id, entry);
+      }
+    }
+
+    const seedSet = new Set(seedAnimIds);
+
+    // Build clusters
+    const clusters: AnimationCluster[] = [];
+    for (const [frameGroup, animMap] of clusterMap) {
+      const animations: AnimationCluster['animations'] = [];
+      for (const [id, seq] of animMap) {
+        // Get spot anims
+        const spotAnims = this.spotAnimIndex.get(id) || [];
+
+        // Get roles from cross-ref
+        const entities = this.crossRefIndex.animationToEntities.get(id) || [];
+        const roles = entities.map(e => ({
+          entityId: e.id,
+          entityName: e.name,
+          entityType: e.type,
+          role: e.type // Will be enriched by handler
+        }));
+
+        animations.push({
+          id,
+          type: seq.type,
+          frameCount: seq.frameCount,
+          duration: seq.totalDuration,
+          spotAnims,
+          roles,
+          isSource: seedSet.has(id)
+        });
+      }
+      animations.sort((a, b) => a.id - b.id);
+      clusters.push({ frameGroup, animations });
+    }
+
+    clusters.sort((a, b) => a.frameGroup - b.frameGroup);
+
+    return {
+      seedAnimations: seedAnimIds,
+      npc: npcInfo,
+      clusters
+    };
   }
 
   /**

@@ -44,7 +44,8 @@ import {
   SequenceAdvancedFilter,
   SequenceAdvancedResult,
   RelatedAnimationsResult,
-  AnimationRoleEntry
+  AnimationRoleEntry,
+  RelativeAnimationResult
 } from '../types.js';
 
 export class CacheManager {
@@ -347,6 +348,18 @@ export class CacheManager {
 
   getNpcAnimationEntries(npcDef: Record<string, unknown>): AnimationRoleEntry[] {
     return this.indexer.getNpcAnimationEntries(npcDef);
+  }
+
+  async findRelativeAnimationsEnhanced(args: {
+    animation_id?: number;
+    npc_id?: number;
+    range?: number;
+  }): Promise<RelativeAnimationResult | null> {
+    return this.indexer.findRelativeAnimationsEnhanced(args);
+  }
+
+  getSpotAnimsForAnimation(animId: number): number[] {
+    return this.indexer.getSpotAnimsForAnimation(animId);
   }
 }
 

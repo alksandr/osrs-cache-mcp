@@ -79,7 +79,8 @@ import {
   // Phase 10: Animation handlers
   handleFindRelatedAnimations,
   handleSearchSequencesAdvanced,
-  handleGetNpcAnimations
+  handleGetNpcAnimations,
+  handleFindRelativeAnimationsEnhanced
 } from './animation.js';
 
 export function getTools(): Tool[] {
@@ -847,14 +848,15 @@ export function getTools(): Tool[] {
 
     // Phase 10: Animation & Sequence Analysis tools
     {
-      name: 'find_related_animations',
-      description: 'Find all animations related to a given animation ID. Shows other animations used by the same NPCs/objects, and animations sharing the same frame group. Useful for discovering animation sets (idle, walk, attack, death) for a boss or NPC.',
+      name: 'find_relative_animations',
+      description: 'Find animations related by shared frame group (skeleton), with linked spot animations (GFX). Accepts animation_id and/or npc_id. Scans neighboring IDs to discover animation clusters. Returns grouped results with spot anim linkage.',
       inputSchema: {
         type: 'object',
         properties: {
-          animation_id: { type: 'number', description: 'Animation/sequence ID to find related animations for' }
-        },
-        required: ['animation_id']
+          animation_id: { type: 'number', description: 'Animation/sequence ID to find relatives for' },
+          npc_id: { type: 'number', description: 'NPC ID - extracts all animations as seeds' },
+          range: { type: 'number', description: 'ID range to scan around seeds (default: 50)' }
+        }
       }
     },
     {
@@ -1108,6 +1110,8 @@ export async function handleToolCall(
     // Phase 10: Animation & Sequence Analysis tools
     case 'find_related_animations':
       return handleFindRelatedAnimations(cache, args as { animation_id: number });
+    case 'find_relative_animations':
+      return handleFindRelativeAnimationsEnhanced(cache, args as { animation_id?: number; npc_id?: number; range?: number });
     case 'search_sequences_advanced':
       return handleSearchSequencesAdvanced(cache, args as {
         type?: 'skeletal' | 'frame';

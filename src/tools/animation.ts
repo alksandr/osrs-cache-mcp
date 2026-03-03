@@ -2,7 +2,8 @@ import { CacheManager } from '../cache/index.js';
 import {
   ToolResponse,
   SequenceAdvancedFilter,
-  AnimationRoleEntry
+  AnimationRoleEntry,
+  RelativeAnimationResult
 } from '../types.js';
 
 /**
@@ -296,5 +297,78 @@ export async function handleGetNpcAnimations(
       type: 'text',
       text: lines.join('\n')
     }]
+  };
+}
+
+/**
+ * Handle find_relative_animations tool (enhanced version)
+ * Accepts animation_id and/or npc_id, scans neighboring IDs,
+ * groups by frameGroup, includes spot animations
+ */
+export async function handleFindRelativeAnimationsEnhanced(
+  cache: CacheManager,
+  args: { animation_id?: number; npc_id?: number; range?: number }
+): Promise<ToolResponse> {
+  if (args.animation_id == null && args.npc_id == null) {
+    return {
+      content: [{ type: 'text', text: 'At least one of animation_id or npc_id is required.' }],
+      isError: true
+    };
+  }
+
+  const result = await cache.findRelativeAnimationsEnhanced(args);
+
+  if (!result) {
+    return {
+      content: [{ type: 'text', text: 'No animations found. Check the provided animation_id or npc_id.' }],
+      isError: true
+    };
+  }
+
+  const lines: string[] = [
+    'Relative Animations',
+    '─'.repeat(50),
+    ''
+  ];
+
+  // NPC context
+  if (result.npc) {
+    lines.push(`NPC: ${result.npc.name} (ID: ${result.npc.id}, Combat: ${result.npc.combatLevel})`);
+    lines.push('');
+  }
+
+  lines.push(`Seed animation IDs: ${result.seedAnimations.join(', ')}`);
+  lines.push(`Range scanned: ±${args.range ?? 50}`);
+  lines.push('');
+
+  // Clusters
+  let totalAnims = 0;
+  let totalSpotAnims = 0;
+
+  if (result.clusters.length === 0) {
+    lines.push('No animation clusters found (no shared frame groups in range).');
+  } else {
+    for (const cluster of result.clusters) {
+      lines.push(`Frame Group ${cluster.frameGroup} (${cluster.animations.length} animations):`);
+      for (const anim of cluster.animations) {
+        const marker = anim.isSource ? ' ★' : '';
+        const spotStr = anim.spotAnims.length > 0 ? ` [spotanims: ${anim.spotAnims.join(', ')}]` : '';
+        const roleStrs = anim.roles.length > 0
+          ? ` (${anim.roles.map(r => `${r.entityName}`).slice(0, 3).join(', ')}${anim.roles.length > 3 ? '...' : ''})`
+          : '';
+        lines.push(`  ${anim.id}: ${anim.type}, ${anim.frameCount}f, ${anim.duration}t${roleStrs}${spotStr}${marker}`);
+        totalAnims++;
+        totalSpotAnims += anim.spotAnims.length;
+      }
+      lines.push('');
+    }
+  }
+
+  // Summary
+  lines.push('─'.repeat(50));
+  lines.push(`Summary: ${result.clusters.length} cluster(s), ${totalAnims} animation(s), ${totalSpotAnims} linked spot anim(s)`);
+
+  return {
+    content: [{ type: 'text', text: lines.join('\n') }]
   };
 }

@@ -768,6 +768,38 @@ export interface ModelRefExport {
 // Phase 10: Animation & Sequence Analysis Types
 // ============================================
 
+// Spot animation index entry
+export interface SpotAnimIndexEntry {
+  id: number;
+  animationId: number;
+  modelId: number;
+}
+
+// Relative animation result (enhanced find_relative_animations)
+export interface RelativeAnimationResult {
+  seedAnimations: number[];
+  npc?: {
+    id: number;
+    name: string;
+    combatLevel: number;
+  };
+  clusters: AnimationCluster[];
+}
+
+// Animation cluster grouped by shared frameGroup
+export interface AnimationCluster {
+  frameGroup: number;
+  animations: Array<{
+    id: number;
+    type: SequenceType;
+    frameCount: number;
+    duration: number;
+    spotAnims: number[];
+    roles: Array<{ entityId: number; entityName: string; entityType: string; role: string }>;
+    isSource: boolean;
+  }>;
+}
+
 // Animation type classification
 export type SequenceType = 'skeletal' | 'frame';
 
