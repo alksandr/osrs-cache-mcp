@@ -1,11 +1,12 @@
 # OSRS Cache MCP Server - Development Roadmap
 
-## Current State (v1.6)
+## Current State (v1.7)
 
-The server currently exposes **40 tools** across 18 cache types:
+The server currently exposes **43 tools** across 18 cache types:
 - 22 lookup tools (items, NPCs, objects, enums, sequences, interfaces, structs, params, varbits, var_players, sprites, sprite frames, sprite groups, dbrows, dbtables, scripts, list_scripts, list_sprites, gamevals, list_gameval_categories, list_interfaces, get_interface_tree)
 - 15 search tools (items, NPCs, objects, scripts by content, sprites by pattern, varbits, varbits by index, varbit script refs, gamevals, items_advanced, npcs_advanced, objects_advanced, interfaces, interfaces_by_action)
 - 3 cross-reference tools (by model, animation, inventory model)
+- 3 animation analysis tools (find_related_animations, search_sequences_advanced, get_npc_animations)
 
 **Cache Statistics:**
 - Items: 33,001 definitions
@@ -272,7 +273,41 @@ The server currently exposes **40 tools** across 18 cache types:
 
 ---
 
-## Phase 10: Version & Diff Support
+## Phase 10: Animation & Sequence Analysis (COMPLETED)
+
+**Goal:** Deep animation analysis, related animation discovery, and NPC animation profiling
+
+### Tasks
+
+- [x] Build sequence index on startup (all 13,694 animations indexed with type, duration, priority, sounds, hand items, frame group, Maya ID)
+- [x] Implement `find_related_animations(animation_id)` - Find related animations
+  - Other animations used by the same NPCs/objects
+  - Animations sharing the same frame group (archive ID)
+  - Groups results by entity showing animation roles
+  - Shows all unique related animation IDs
+- [x] Implement `search_sequences_advanced(filters)` - Advanced animation search
+  - Filter by type: skeletal (BA2/Maya) or frame (classic)
+  - Filter by duration, frame count, priority ranges
+  - Filter by sound effects, hand items
+  - Filter by frame group or Maya animation ID
+  - Filter by NPC name or object name (partial match)
+  - Pagination support
+- [x] Implement `get_npc_animations(npc_id)` - Comprehensive NPC animation view
+  - All definition-level animations (idle, walk, run, rotate, crawl, idle rotate)
+  - Per-animation: sequence type, frame count, duration, priority, sounds
+  - Transform/morph variant animations (if NPC has multiple forms)
+  - Summary of all unique animation IDs
+
+### Files Modified
+- `src/types.ts` - Added SequenceIndexEntry, SequenceType, SequenceAdvancedFilter, SequenceAdvancedResult, RelatedAnimationsResult, NpcAnimationsResult, AnimationRoleEntry, AnimationRole
+- `src/cache/indexer.ts` - Added buildSequenceIndex, getSequenceEntry, searchSequencesAdvanced, findRelatedAnimations, getNpcAnimationEntries (INDEX_VERSION bumped to 11)
+- `src/cache/index.ts` - Added CacheManager facade methods for animation analysis
+- `src/tools/animation.ts` - **NEW FILE** - Animation tool handlers (handleFindRelatedAnimations, handleSearchSequencesAdvanced, handleGetNpcAnimations)
+- `src/tools/index.ts` - Registered 3 new tools
+
+---
+
+## Phase 11: Version & Diff Support
 
 **Goal:** Track cache changes over time
 
@@ -322,4 +357,4 @@ When implementing new features:
 
 ---
 
-*Last updated: January 2026 (v1.6 - Phase 6 complete)*
+*Last updated: March 2026 (v1.7 - Phase 10 complete)*
