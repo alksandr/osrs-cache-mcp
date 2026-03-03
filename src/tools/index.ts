@@ -75,6 +75,12 @@ import {
   handleExportNpcCombat,
   handleExportModelRefs
 } from './export.js';
+import {
+  // Phase 10: Animation handlers
+  handleFindRelatedAnimations,
+  handleSearchSequencesAdvanced,
+  handleGetNpcAnimations
+} from './animation.js';
 
 export function getTools(): Tool[] {
   return [
@@ -837,6 +843,59 @@ export function getTools(): Tool[] {
           }
         }
       }
+    },
+
+    // Phase 10: Animation & Sequence Analysis tools
+    {
+      name: 'find_related_animations',
+      description: 'Find all animations related to a given animation ID. Shows other animations used by the same NPCs/objects, and animations sharing the same frame group. Useful for discovering animation sets (idle, walk, attack, death) for a boss or NPC.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          animation_id: { type: 'number', description: 'Animation/sequence ID to find related animations for' }
+        },
+        required: ['animation_id']
+      }
+    },
+    {
+      name: 'search_sequences_advanced',
+      description: 'Advanced animation/sequence search with multiple filters. Filter by type (skeletal/frame), duration, frame count, priority, sounds, hand items, frame group, Maya ID, or by NPC/object name. Supports pagination.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ['skeletal', 'frame'],
+            description: 'Filter by animation type: "skeletal" (BA2/Maya-based, modern) or "frame" (classic frame-based)'
+          },
+          minDuration: { type: 'number', description: 'Minimum total duration in game ticks' },
+          maxDuration: { type: 'number', description: 'Maximum total duration in game ticks' },
+          minFrameCount: { type: 'number', description: 'Minimum number of frames' },
+          maxFrameCount: { type: 'number', description: 'Maximum number of frames' },
+          hasSounds: { type: 'boolean', description: 'Filter by whether animation has sound effects' },
+          leftHandItem: { type: 'number', description: 'Filter by left hand item ID held during animation' },
+          rightHandItem: { type: 'number', description: 'Filter by right hand item ID held during animation' },
+          minPriority: { type: 'number', description: 'Minimum forced priority' },
+          maxPriority: { type: 'number', description: 'Maximum forced priority' },
+          frameGroup: { type: 'number', description: 'Filter by frame archive group ID (frame-based animations only)' },
+          animMayaID: { type: 'number', description: 'Filter by exact Maya animation ID (skeletal animations only)' },
+          usedByNpc: { type: 'string', description: 'Filter by NPC name (partial match) - shows only animations used by matching NPCs' },
+          usedByObject: { type: 'string', description: 'Filter by object name (partial match) - shows only animations used by matching objects' },
+          offset: { type: 'number', description: 'Result offset for pagination (default: 0)' },
+          limit: { type: 'number', description: 'Max results per page (default: 25)' }
+        }
+      }
+    },
+    {
+      name: 'get_npc_animations',
+      description: 'Get comprehensive animation information for an NPC. Shows all defined animations (idle, walk, run, rotate, crawl) with sequence details (type, duration, priority, sounds). Also shows transform/morph variant animations if the NPC has multiple forms.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          npc_id: { type: 'number', description: 'NPC ID to get animations for (e.g., 3127 for TzTok-Jad, 6611 for Vet\'ion)' }
+        },
+        required: ['npc_id']
+      }
     }
   ];
 }
@@ -1045,6 +1104,31 @@ export async function handleToolCall(
         entity_type?: 'item' | 'npc' | 'object';
         min_usage?: number;
       });
+
+    // Phase 10: Animation & Sequence Analysis tools
+    case 'find_related_animations':
+      return handleFindRelatedAnimations(cache, args as { animation_id: number });
+    case 'search_sequences_advanced':
+      return handleSearchSequencesAdvanced(cache, args as {
+        type?: 'skeletal' | 'frame';
+        minDuration?: number;
+        maxDuration?: number;
+        minFrameCount?: number;
+        maxFrameCount?: number;
+        hasSounds?: boolean;
+        leftHandItem?: number;
+        rightHandItem?: number;
+        minPriority?: number;
+        maxPriority?: number;
+        frameGroup?: number;
+        animMayaID?: number;
+        usedByNpc?: string;
+        usedByObject?: string;
+        offset?: number;
+        limit?: number;
+      });
+    case 'get_npc_animations':
+      return handleGetNpcAnimations(cache, args as { npc_id: number });
 
     default:
       return {
