@@ -51,8 +51,37 @@ async function main() {
   if (mode === 'sse') {
     const port = parseInt(process.env.PORT ?? '3000', 10);
     const transports: Record<string, SSEServerTransport> = {};
-
     const apiKey = process.env.API_KEY;
+
+    // Rate limiting: track requests per IP
+    const MAX_REQUESTS_PER_WINDOW = parseInt(process.env.RATE_LIMIT ?? '60', 10);
+    const RATE_WINDOW_MS = parseInt(process.env.RATE_WINDOW_MS ?? '60000', 10);
+    const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+    function isRateLimited(ip: string): boolean {
+      const now = Date.now();
+      const entry = rateLimitMap.get(ip);
+      if (!entry || now >= entry.resetAt) {
+        rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+        return false;
+      }
+      entry.count++;
+      return entry.count > MAX_REQUESTS_PER_WINDOW;
+    }
+
+    // Clean up stale rate limit entries every 5 minutes
+    setInterval(() => {
+      const now = Date.now();
+      for (const [ip, entry] of rateLimitMap) {
+        if (now >= entry.resetAt) rateLimitMap.delete(ip);
+      }
+    }, 300_000);
+
+    // Max concurrent sessions
+    const MAX_SESSIONS = parseInt(process.env.MAX_SESSIONS ?? '5', 10);
+
+    // Max request body size (1 MB)
+    const MAX_BODY_SIZE = parseInt(process.env.MAX_BODY_SIZE ?? '1048576', 10);
 
     const httpServer = http.createServer(async (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -64,6 +93,7 @@ async function main() {
         return;
       }
 
+      // API key check
       if (apiKey) {
         const auth = req.headers['authorization'];
         if (auth !== `Bearer ${apiKey}`) {
@@ -73,7 +103,24 @@ async function main() {
         }
       }
 
+      // Rate limiting
+      const ip = req.headers['cf-connecting-ip'] as string
+        ?? req.headers['x-forwarded-for'] as string
+        ?? req.socket.remoteAddress
+        ?? 'unknown';
+      if (isRateLimited(ip)) {
+        res.writeHead(429);
+        res.end('Too many requests');
+        return;
+      }
+
       if (req.url === '/sse' && req.method === 'GET') {
+        // Max concurrent sessions check
+        if (Object.keys(transports).length >= MAX_SESSIONS) {
+          res.writeHead(503);
+          res.end('Too many sessions');
+          return;
+        }
         const transport = new SSEServerTransport('/message', res);
         transports[transport.sessionId] = transport;
         res.on('close', () => { delete transports[transport.sessionId]; });
@@ -83,6 +130,14 @@ async function main() {
       }
 
       if (req.url?.startsWith('/message') && req.method === 'POST') {
+        // Request body size check
+        const contentLength = parseInt(req.headers['content-length'] ?? '0', 10);
+        if (contentLength > MAX_BODY_SIZE) {
+          res.writeHead(413);
+          res.end('Request too large');
+          return;
+        }
+
         const url = new URL(req.url, `http://localhost:${port}`);
         const sessionId = url.searchParams.get('sessionId') ?? '';
         const transport = transports[sessionId];
@@ -99,9 +154,13 @@ async function main() {
       res.end('Not found');
     });
 
+    // Enforce body size at the socket level
+    httpServer.maxHeadersCount = 50;
+
     httpServer.listen(port, () => {
       log(`[osrs-cache] MCP SSE server listening on port ${port}`);
       log(`[osrs-cache] SSE endpoint: http://localhost:${port}/sse`);
+      log(`[osrs-cache] Rate limit: ${MAX_REQUESTS_PER_WINDOW} req/${RATE_WINDOW_MS}ms, max sessions: ${MAX_SESSIONS}, max body: ${MAX_BODY_SIZE}B`);
     });
   } else {
     const server = createServer(cache);
