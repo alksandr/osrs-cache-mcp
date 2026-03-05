@@ -23,6 +23,7 @@ services:
       - OSRS_CACHE_PATH=/data/cache
       - MCP_TRANSPORT=sse
       - PORT=3000
+      - API_KEY=${API_KEY}
     ports:
       - "3000:3000"
     restart: unless-stopped

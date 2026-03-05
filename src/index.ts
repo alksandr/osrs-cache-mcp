@@ -52,14 +52,25 @@ async function main() {
     const port = parseInt(process.env.PORT ?? '3000', 10);
     const transports: Record<string, SSEServerTransport> = {};
 
+    const apiKey = process.env.API_KEY;
+
     const httpServer = http.createServer(async (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
       if (req.method === 'OPTIONS') {
         res.writeHead(204);
         res.end();
         return;
+      }
+
+      if (apiKey) {
+        const auth = req.headers['authorization'];
+        if (auth !== `Bearer ${apiKey}`) {
+          res.writeHead(401);
+          res.end('Unauthorized');
+          return;
+        }
       }
 
       if (req.url === '/sse' && req.method === 'GET') {
