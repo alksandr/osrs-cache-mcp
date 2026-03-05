@@ -21,7 +21,8 @@ services:
       - ${CACHE_PATH:?Set CACHE_PATH in .env}:/data/cache:ro
     environment:
       - OSRS_CACHE_PATH=/data/cache
-    stdin_open: true
-    tty: true
+      - MCP_TRANSPORT=sse
+      - PORT=3000
+    ports:
+      - "3000:3000"
     restart: unless-stopped
-    entrypoint: ["tail", "-f", "/dev/null"]
